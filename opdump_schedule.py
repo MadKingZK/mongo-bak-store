@@ -1,6 +1,5 @@
-import schedule, time, threading, settings, re, os, sys
-from tools import ossTools
-from tools import sshTools
+import schedule, time, threading, settings, re, os, sys, hashlib
+from tools import ossTools, sshTools, get_file_md5, zip_dir
 from os import listdir
 from datetime import datetime
 
@@ -31,21 +30,19 @@ def oplog_dump():
         ip = db_info.get('ip')
         port = db_info.get('port')
         local_store = settings.local_store
-        temp_file_name = '{local_store}{db_name}_{port}_{start_time}_{end_time}_temp'.format(local_store=local_store,db_name=host, port=port, start_time=start_time, end_time=end_time)
-        file_name = '{local_store}{db_name}_{port}_{start_time}_{end_time}'.format(local_store=local_store,db_name=host, port=port, start_time=start_time, end_time=end_time)
-        cmd = '''mongodump --port {port} -d local -c oplog.rs -q '{{"ts": {{$gt:Timestamp({start_time}, 1),$lt:Timestamp({end_time}, 1)}}}}' -o {file_name} '''.format(host=host, ip=ip, port=port, start_time=start_time, end_time=end_time, file_name=temp_file_name)
-        print(cmd)
-        job_thread = threading.Thread(target=op_dump_exec, args=(ip, cmd, file_name, temp_file_name))
+        temp_dir_name = '{local_store}{db_name}_{port}_{start_time}_{end_time}_temp'.format(local_store=local_store,db_name=host, port=port, start_time=start_time, end_time=end_time)
+        dir_name = '{local_store}{db_name}_{port}_{start_time}_{end_time}'.format(local_store=local_store,db_name=host, port=port, start_time=start_time, end_time=end_time)
+        cmd = '''mongodump --port {port} -d local -c oplog.rs -q '{{"ts": {{$gt:Timestamp({start_time}, 1),$lt:Timestamp({end_time}, 1)}}}}' -o {file_name} '''.format(host=host, ip=ip, port=port, start_time=start_time, end_time=end_time, file_name=temp_dir_name)
+        job_thread = threading.Thread(target=op_dump_exec, args=(ip, cmd, dir_name, temp_dir_name))
         job_thread.start()
 
     put_cursor(end_time)
 
-
-def op_dump_exec(ip, cmd, file_name, temp_file_name):
+def op_dump_exec(ip, cmd, dir_name, temp_dir_name):
     ssh = sshTools(ip)
     status = ssh.execute_cmd(cmd)
     if status == 0:
-        status = ssh.execute_cmd('mv {temp_file_name} {file_name}'.format(temp_file_name=temp_file_name, file_name=file_name))
+        status = ssh.execute_cmd('mv {temp_dir_name} {dir_name}'.format(temp_dir_name=temp_dir_name, dir_name=dir_name))
         if status != 0:
             pass
             #logger
@@ -54,38 +51,58 @@ def op_dump_exec(ip, cmd, file_name, temp_file_name):
         #logger
     ssh.ssh.close()
 
-
 def oas_upload():
     global UPLOADING
     if UPLOADING == 1:
         pass
     else:
         UPLOADING = 1
-        file_list = listdir(settings.local_store)
-        for file in file_list:
-            print(file)
-            res = re.match('^.*_\d{10}_\d{10}$', file)
+        dir_list = listdir(settings.local_store)
+        for dir in dir_list:
+            print(dir)
+            res = re.match('^.*_\d{10}_\d{10}$', dir)
             if res:
-                match_obj = re.match('([a-zA-Z-0-9]+)_\d+_\d{10}_\d{10}', file)
+                match_obj = re.match('([a-zA-Z-0-9]+)_\d+_\d{10}_\d{10}', dir)
                 if not match_obj:
                     print('not match')
                     continue
                     #logger
                 else:
                     host = match_obj.group(1)
+
+                #压缩local目录以及其下面的文件
+                zip_dir(settings.local_store + dir + '/local', settings.local_store + dir + '/local.zip')
+                print('压缩完毕')
+
+                #计算文件的md5值并输出到文件中
+                file_md5 = get_file_md5(settings.local_store + dir + '/local.zip')
+                with open(settings.local_store + dir + '/local.md5', 'w') as md5_f:
+                    md5_f.write(file_md5)
+
                 oss = ossTools(settings.access_key_id, settings.access_key_secret)
-                remote_file = datetime.now().strftime('%Y/%m/%d/') + host +'/'+ file
-                local_file = settings.local_store + file + '/local/oplog.rs.bson'
-                res = oss.multi_upload_obj(remote_file, local_file)
-                print(res,host)
-                if not res:
-                    for restore_file in listdir(settings.local_store + file + '/local/'):
-                        os.remove(settings.local_store + file + '/local/' + restore_file)
-                    os.rmdir(settings.local_store + file + '/local')
-                    os.rmdir(settings.local_store + file)
+                remote_file = datetime.now().strftime('%Y/%m/%d/') + host +'/'+ dir
+                local_data_file = settings.local_store + dir + '/local.zip'
+                res_up_data = oss.multi_upload_obj(remote_file + '/local.zip', local_data_file)
+                local_md5_file = settings.local_store + dir + '/local.md5'
+                res_up_md5 = oss.multi_upload_obj(remote_file + '/local.md5', local_md5_file)
+
+                if not res_up_data and not res_up_md5:
+                    try:
+                        for restore_file in listdir(settings.local_store + dir + '/local/'):
+                            os.remove(settings.local_store + dir + '/local/' + restore_file)
+                    except: pass
+                    try:
+                        os.rmdir(settings.local_store + dir + '/local')
+                    except: pass
+                    try:
+                        for restore_file in listdir(settings.local_store + dir):
+                            os.remove(settings.local_store + dir + '/' + restore_file)
+                    except: pass
+                    try:
+                        os.rmdir(settings.local_store + dir)
+                    except: pass
 
         UPLOADING = 0
-
 
 def logger():
     pass
@@ -115,6 +132,7 @@ def main():
         sys.stdout.write("======check schedule======")
         schedule.run_pending()
         time.sleep(settings.sche_sleep)
+
 
 if __name__ == '__main__':
 

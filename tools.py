@@ -1,7 +1,5 @@
 # -*- coding: utf-8 -*-
-import oss2
-import paramiko
-import settings
+import oss2, paramiko, os, hashlib, zipfile, settings
 from itertools import islice
 
 
@@ -66,10 +64,42 @@ class sshTools(object):
 class ansibleTools(object):
     pass
 
+
+class ecsSnapshot(object):
+    pass
+
+
+def get_file_md5(file_name):
+    md5 = None
+    if os.path.isfile(file_name):
+        f = open(file_name, 'rb')
+        md5_obj = hashlib.md5()
+        md5_obj.update(f.read())
+        hash_code = md5_obj.hexdigest()
+        f.close()
+        md5 = str(hash_code).lower()
+    return md5
+
+def zip_dir(dirname, zipfilename):
+    filelist = []
+    if os.path.isfile(dirname):
+        filelist.append(dirname)
+    else:
+        for root, dirs, files in os.walk(dirname):
+            for dir in dirs:
+                filelist.append(os.path.join(root, dir))
+            for name in files:
+                filelist.append(os.path.join(root, name))
+
+    zf = zipfile.ZipFile(zipfilename, "w", zipfile.zlib.DEFLATED)
+    for tar in filelist:
+        arcname = tar[len(dirname):]
+        # print arcname
+        zf.write(tar, arcname)
+    print(filelist)
+    zf.close()
+
 if __name__ == '__main__':
-    oss = ossTools(settings.access_key_id, settings.access_key_secret)
-    res = oss.multi_upload_obj('test/ossbook.pdf', '/Users/harvey/Downloads/ossbook.pdf')
-    #res = oss.search_obj()
-    # oss.restore_obj()
-    # res = oss.download_obj()
-    print(res)
+    zip_dir('/tmp/test','/tmp/test123.zip')
+    md5 = get_file_md5('/tmp/test123.zip')
+    print(md5)

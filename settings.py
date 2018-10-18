@@ -1,19 +1,19 @@
 dbs_info = [
-{ 'host': 'test', 'ip': '10.1.1.1', 'port': 27077 },
+{ 'host': 'test', 'ip': '10.0.0.1', 'port': 27077 },
 
 ]
 
 key_file = '/root/.ssh/id_rsa'
 local_store = '/mnt/dbbaktmp/'
-pid_file = '/tmp/mongo-bak-store.pid'
+pid_file = '/tmp/mongo-store.pid'
 log = '/tmp/daemon.log'
 error_log = '/tmp/daemon.log'
-access_key_id = 'alikey'
-access_key_secret = 'alisecrt'
+access_key_id = ''
+access_key_secret = ''
 ssh_user = 'root'
 
-oss_endpoint = 'ali-endpoint'
-oss_bucket = 'bucket'
+oss_endpoint = 'oss-cn-hangzhou-internal.aliyuncs.com'
+oss_bucket = ''
 
 #记录CURSOR
 cur_file = '/tmp/curfile'
