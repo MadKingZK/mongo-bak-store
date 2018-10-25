@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
-import oss2, paramiko, os, hashlib, zipfile, settings
+import oss2, paramiko, os, hashlib, zipfile, settings, json
 from itertools import islice
+from aliyunsdkcore.client import AcsClient
+from aliyunsdkecs.request.v20140526 import CreateSnapshotRequest, DescribeSnapshotLinksRequest, \
+    DeleteSnapshotRequest, DescribeDisksRequest, DescribeInstancesRequest
 
 
 class ossTools():
@@ -65,8 +68,73 @@ class ansibleTools(object):
     pass
 
 
-class ecsSnapshot(object):
-    pass
+class aliEcsSnapshot(object):
+    def __init__(self, ali_key, ali_secret, region_id):
+        self.ali_key = ali_key
+        self.ali_secret = ali_secret
+        self.client = AcsClient(
+            self.ali_key,
+            self.ali_secret,
+        )
+        self.region_id = region_id
+        self.client.set_region_id(self.region_id)
+
+    def get_instanceid(self, ip):
+        request = DescribeInstancesRequest.DescribeInstancesRequest()
+        request.set_InstanceNetworkType('classic')
+        request.set_InnerIpAddresses(ip)
+        response = self.client.do_action_with_exception(request)
+        response_dic = json.loads(response)
+        instance_id = response_dic.get('Instances').get('Instance')[0].get('InstanceId')
+        return instance_id
+
+    def get_disk_ids(self, instance_id):
+        request = DescribeDisksRequest.DescribeDisksRequest()
+        request.set_InstanceId(instance_id)
+        request.set_DiskType('all')
+        request.set_Status('In_use')
+        request.set_PageSize(20)
+        response = self.client.do_action_with_exception(request)
+        response_dic = json.loads(response)
+        disks = response_dic.get('Disks').get('Disk')
+        return disks
+
+
+    def create_snapshot(self, disk_id, snap_name, description):
+        request = CreateSnapshotRequest.CreateSnapshotRequest()
+        request.set_DiskId(disk_id)
+        request.set_SnapshotName(snap_name)
+        request.set_Description(description)
+        response = self.client.do_action_with_exception(request)
+        response_dic = json.loads(response)
+        return response_dic
+
+    def find_snapshot(self, instance_id, disk_id_lst, page_size):
+        request = DescribeSnapshotLinksRequest.DescribeSnapshotLinksRequest()
+        request.set_InstanceId(instance_id)
+        request.set_DiskIds(disk_id_lst)
+        request.set_PageSize(page_size)
+        pageNumber = 1
+        request.set_PageNumber(pageNumber)
+
+        response = self.client.do_action_with_exception(request)
+        response_dict = json.loads(response)
+        # 生成生成器
+        while response_dict:
+            yield response_dict
+            pageNumber += 1
+            request.set_PageNumber(pageNumber)
+            response = self.client.do_action_with_exception(request)
+            response_dict = json.loads(response)
+
+    def delete_snapshot(self,snap_id):
+        self.client.set_region_id(self.region_id)
+        request = DeleteSnapshotRequest.DeleteSnapshotRequest()
+        request.set_SnapshotId(snap_id)
+        response = self.client.do_action_with_exception(request)
+        response = json.loads(response)
+        return response
+
 
 
 def get_file_md5(file_name):
@@ -99,7 +167,17 @@ def zip_dir(dirname, zipfilename):
     print(filelist)
     zf.close()
 
+
 if __name__ == '__main__':
-    zip_dir('/tmp/test','/tmp/test123.zip')
-    md5 = get_file_md5('/tmp/test123.zip')
-    print(md5)
+    # zip_dir('/tmp/test','/tmp/test123.zip')
+    # md5 = get_file_md5('/tmp/test123.zip')
+    # print(md5)
+
+    snap = aliEcsSnapshot('', '', 'cn-qingdao')
+    #response = snap.create_snapshot('', '', '测试快照服务')
+    #response = snap.delete_snapshot('')
+    #instanceid = snap.get_instanceid([""])
+    disks = snap.get_disk_ids("")
+    for disk in disks:
+        disk_id = disk.get('DiskId')
+        print(disk_id)
