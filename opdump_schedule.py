@@ -1,4 +1,4 @@
-import schedule, time, threading, settings, re, os, sys, hashlib
+import schedule, time, threading, settings, re, os, sys
 from tools import ossTools, sshTools, get_file_md5, zip_dir, aliEcsSnapshot
 from os import listdir
 from datetime import datetime
@@ -30,8 +30,8 @@ def oplog_dump():
         ip = db_info.get('ip')
         port = db_info.get('port')
         local_store = settings.local_store
-        temp_dir_name = '{local_store}{db_name}_{port}_{start_time}_{end_time}_temp'.format(local_store=local_store,db_name=host, port=port, start_time=start_time, end_time=end_time)
-        dir_name = '{local_store}{db_name}_{port}_{start_time}_{end_time}'.format(local_store=local_store,db_name=host, port=port, start_time=start_time, end_time=end_time)
+        temp_dir_name = '{local_store}{db_name}-{port}_{start_time}_{end_time}_temp'.format(local_store=local_store,db_name=host, port=port, start_time=start_time, end_time=end_time)
+        dir_name = '{local_store}{db_name}-{port}_{start_time}_{end_time}'.format(local_store=local_store,db_name=host, port=port, start_time=start_time, end_time=end_time)
         cmd = '''mongodump --port {port} -d local -c oplog.rs -q '{{"ts": {{$gt:Timestamp({start_time}, 1),$lt:Timestamp({end_time}, 1)}}}}' -o {file_name} '''.format(host=host, ip=ip, port=port, start_time=start_time, end_time=end_time, file_name=temp_dir_name)
         job_thread = threading.Thread(target=op_dump_exec, args=(ip, cmd, dir_name, temp_dir_name))
         job_thread.start()
@@ -62,7 +62,7 @@ def oas_upload():
             print(dir)
             res = re.match('^.*_\d{10}_\d{10}$', dir)
             if res:
-                match_obj = re.match('([a-zA-Z-0-9]+)_\d+_\d{10}_\d{10}', dir)
+                match_obj = re.match('([a-zA-Z-0-9]+).*_\d{10}_\d{10}', dir)
                 if not match_obj:
                     print('not match')
                     continue
@@ -108,7 +108,7 @@ def oas_upload():
 def full_db_backup():
     #一次只做一个host的，相当于抛出一个线程去维护一个host的所有db的全量备份，也就是备份这个host的所有磁盘，
     wholebak_infos = get_wholebak_infos()
-    for host, info in wholebak_infos.keys():
+    for host, info in wholebak_infos.items():
         job_thread = threading.Thread(target=make_full_backup, args=(host, info))
         job_thread.start()
 
@@ -118,28 +118,35 @@ def make_full_backup(host, info):
     ip = info.get('ip')
     port_lst = info.get('port')
     ssh = sshTools(ip)
+    des_info = ''
     for port in port_lst:
-        ssh.execute_cmd("echo 'db.runCommand({fsync:1,lock:1});' | mongo --port {port} admin".format(port=port))
+        lock_time = int(time.time())
+        ssh.execute_cmd("echo 'db.runCommand({{fsync:1,lock:1}});' | mongo --port {port} admin".format(port=port))
         # 检查是否锁，没有则抛错，继续锁，锁三次, 再失败则放弃，报错
 
         # 取timestamp
+        start_timestamp_dic = {}
         start_timestamp = ssh.execute_cmd("mongo --port %d local --quiet --eval 'db.replset.minvalid.find({},{_id:0,begin:1})'|awk -F '[(,)]' '{print $2}'"%port)
-        # 打快照
-        instance_id = ali_ecs_snap.get_instanceid(ip)
-        disk_id = ali_ecs_snap.get_disk_ids(instance_id)
-        snap_name = '{host}-{port}-{star_timestamp}'.format(host=host, port=port, start_timestamp=start_timestamp)
-        description = 'mongo full backup at {star_timestamp}'.format(star_timestamp=start_timestamp)
-        snap_response = ali_ecs_snap.create_snapshot(disk_id, snap_name, description)
-        sys.stdout.write(snap_response)
-        #解锁实例
+        if not start_timestamp:
+            start_timestamp = lock_time
+        start_timestamp_dic[port] = start_timestamp
+        des_info += str(port) + 'at' + str(start_timestamp) + ' '
+    # 打快照
+    instance_id = ali_ecs_snap.get_instanceid([ip])
+    disk_ids = ali_ecs_snap.get_disk_ids(instance_id)
+    for disk_id in disk_ids:
+        snap_name = '{host}-{start_timestamp}'.format(host=host, start_timestamp=datetime.now().strftime('%Y-%m-%d'))
+        description = 'mongo full backup' + des_info
+        #snap_response = ali_ecs_snap.create_snapshot(disk_id, snap_name, description)
+
+    #解锁实例 # 整备与增量备份连接
+    inc_bak_cursor = get_cursor()
+    for port in port_lst:
         ssh.execute_cmd("echo 'db.fsyncUnlock();' | mongo --port {port} admin".format(port=port))
-
-        #整备与增量备份连接
-        inc_bak_cursor = get_cursor()
         if abs(int(inc_bak_cursor) - int(start_timestamp)) >= 43200:
-            continue
-
+            print('-----> to old time')
         else:
+            print('-----> begin to link ful and inc')
             if int(inc_bak_cursor) > int(start_timestamp):
                 start_time = start_timestamp
                 end_time = inc_bak_cursor
@@ -151,17 +158,16 @@ def make_full_backup(host, info):
                 end_time = start_timestamp
 
             local_store = settings.local_store
-            temp_dir_name = '{local_store}forfull_{db_name}_{port}_{start_time}_{end_time}_temp'.format(local_store=local_store,
+            temp_dir_name = '{local_store}{db_name}-{port}_forfull_{start_time}_{end_time}_temp'.format(local_store=local_store,
                                                                                                 db_name=host, port=port,
                                                                                                 start_time=start_time,
                                                                                                 end_time=end_time)
-            dir_name = '{local_store}forfull_{db_name}_{port}_{start_time}_{end_time}'.format(local_store=local_store, db_name=host,
+            dir_name = '{local_store}{db_name}-{port}_forfull_{start_time}_{end_time}'.format(local_store=local_store, db_name=host,
                                                                                       port=port, start_time=start_time,
                                                                                       end_time=end_time)
             cmd = '''mongodump --port {port} -d local -c oplog.rs -q '{{"ts": {{$gt:Timestamp({start_time}, 1),$lt:Timestamp({end_time}, 1)}}}}' -o {file_name} '''.format(
                 host=host, ip=ip, port=port, start_time=start_time, end_time=end_time, file_name=temp_dir_name)
-            job_thread = threading.Thread(target=op_dump_exec, args=(ip, cmd, dir_name, temp_dir_name))
-            job_thread.start()
+            op_dump_exec(ip, cmd, dir_name, temp_dir_name)
 
 def get_wholebak_infos():
     wholebak_infos = {}
@@ -196,8 +202,7 @@ def main():
 
     schedule.every(settings.dumpop_interval).seconds.do(oplog_dump)
     schedule.every(settings.upload_interval).seconds.do(oas_upload)
-    schedule.every().day.at('00:10').do(make_full_backup)
-    # schedule.every(1200).minutes.do(oas_upload)
+    schedule.every().day.at(settings.full_bakdb_at).do(full_db_backup)
     while True:
         sys.stdout.write("======check schedule======")
         schedule.run_pending()

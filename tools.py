@@ -97,7 +97,10 @@ class aliEcsSnapshot(object):
         response = self.client.do_action_with_exception(request)
         response_dic = json.loads(response)
         disks = response_dic.get('Disks').get('Disk')
-        return disks
+        disk_ids = []
+        for disk in disks:
+            disk_ids.append(disk.get('DiskId'))
+        return disk_ids
 
 
     def create_snapshot(self, disk_id, snap_name, description):
@@ -105,6 +108,7 @@ class aliEcsSnapshot(object):
         request.set_DiskId(disk_id)
         request.set_SnapshotName(snap_name)
         request.set_Description(description)
+
         response = self.client.do_action_with_exception(request)
         response_dic = json.loads(response)
         return response_dic
@@ -169,15 +173,4 @@ def zip_dir(dirname, zipfilename):
 
 
 if __name__ == '__main__':
-    # zip_dir('/tmp/test','/tmp/test123.zip')
-    # md5 = get_file_md5('/tmp/test123.zip')
-    # print(md5)
-
-    snap = aliEcsSnapshot('', '', 'cn-qingdao')
-    #response = snap.create_snapshot('', '', '测试快照服务')
-    #response = snap.delete_snapshot('')
-    #instanceid = snap.get_instanceid([""])
-    disks = snap.get_disk_ids("")
-    for disk in disks:
-        disk_id = disk.get('DiskId')
-        print(disk_id)
+    pass
