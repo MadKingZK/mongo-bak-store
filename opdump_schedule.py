@@ -143,19 +143,20 @@ def make_full_backup(host, info):
     inc_bak_cursor = get_cursor()
     for port in port_lst:
         ssh.execute_cmd("echo 'db.fsyncUnlock();' | mongo --port {port} admin".format(port=port))
-        if abs(int(inc_bak_cursor) - int(start_timestamp)) >= 43200:
+        full_bak_time = start_timestamp_dic[port]
+        if abs(int(inc_bak_cursor) - int(full_bak_time)) >= 43200:
             print('-----> to old time')
         else:
             print('-----> begin to link ful and inc')
-            if int(inc_bak_cursor) > int(start_timestamp):
-                start_time = start_timestamp
+            if int(inc_bak_cursor) > int(full_bak_time):
+                start_time = full_bak_time
                 end_time = inc_bak_cursor
-            elif int(inc_bak_cursor) > int(start_timestamp):
-                start_time = start_timestamp - 1
-                end_time = start_timestamp
+            elif int(inc_bak_cursor) < int(full_bak_time):
+                start_time = full_bak_time
+                end_time = inc_bak_cursor + settings.dumpop_interval
             else:
                 start_time = inc_bak_cursor
-                end_time = start_timestamp
+                end_time = inc_bak_cursor - 1
 
             local_store = settings.local_store
             temp_dir_name = '{local_store}{db_name}-{port}_forfull_{start_time}_{end_time}_temp'.format(local_store=local_store,
