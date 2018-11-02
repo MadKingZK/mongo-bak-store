@@ -32,7 +32,7 @@ def oplog_dump():
         local_store = settings.local_store
         temp_dir_name = '{local_store}{db_name}-{port}_{start_time}_{end_time}_temp'.format(local_store=local_store,db_name=host, port=port, start_time=start_time, end_time=end_time)
         dir_name = '{local_store}{db_name}-{port}_{start_time}_{end_time}'.format(local_store=local_store,db_name=host, port=port, start_time=start_time, end_time=end_time)
-        cmd = '''mongodump --port {port} -d local -c oplog.rs -q '{{"ts": {{$gt:Timestamp({start_time}, 1),$lt:Timestamp({end_time}, 1)}}}}' -o {file_name} '''.format(host=host, ip=ip, port=port, start_time=start_time, end_time=end_time, file_name=temp_dir_name)
+        cmd = '''mongodump --port {port} -u {user} -p {password} --authenticationDatabase={auth_db} -d local -c oplog.rs -q '{{"ts": {{$gt:Timestamp({start_time}, 1),$lt:Timestamp({end_time}, 1)}}}}' -o {file_name} '''.format(host=host, ip=ip, port=port, user=settings.db_user, password=settings.db_password, auth_db=settings.auth_db, start_time=start_time, end_time=end_time, file_name=temp_dir_name)
         job_thread = threading.Thread(target=op_dump_exec, args=(ip, cmd, dir_name, temp_dir_name))
         job_thread.start()
 
@@ -40,9 +40,9 @@ def oplog_dump():
 
 def op_dump_exec(ip, cmd, dir_name, temp_dir_name):
     ssh = sshTools(ip)
-    status = ssh.execute_cmd(cmd)
+    status, out, err = ssh.execute_cmd(cmd)
     if status == 0:
-        status = ssh.execute_cmd('mv {temp_dir_name} {dir_name}'.format(temp_dir_name=temp_dir_name, dir_name=dir_name))
+        status, out, err = ssh.execute_cmd('mv {temp_dir_name} {dir_name}'.format(temp_dir_name=temp_dir_name, dir_name=dir_name))
         if status != 0:
             pass
             #logger
@@ -118,18 +118,37 @@ def make_full_backup(host, info):
     ip = info.get('ip')
     port_lst = info.get('port')
     ssh = sshTools(ip)
+    tags = []
     des_info = ''
     for port in port_lst:
         lock_time = int(time.time())
-        ssh.execute_cmd("echo 'db.runCommand({{fsync:1,lock:1}});' | mongo --port {port} admin".format(port=port))
+        ssh.execute_cmd(
+            "echo 'db.runCommand({{fsync:1,lock:1}});' | mongo --port {port} admin -u {user} -p {password} ".format(
+                port=port, user=settings.db_user, password=settings.db_password))
         # 检查是否锁，没有则抛错，继续锁，锁三次, 再失败则放弃，报错
 
         # 取timestamp
         start_timestamp_dic = {}
-        start_timestamp = ssh.execute_cmd("mongo --port %d local --quiet --eval 'db.replset.minvalid.find({},{_id:0,begin:1})'|awk -F '[(,)]' '{print $2}'"%port)
+        status, start_timestamp, err = ssh.execute_cmd(
+            '''
+            echo \'\'\'rs.slaveOk()
+                use local
+                db.replset.minvalid.find({},{_id:0,begin:1})
+                \'\'\' | mongo --port %d admin -u %s -p %s --quiet | grep begin | awk -F '[(,)]' '{print $2}'
+            ''' % (port, settings.db_user, settings.db_password))
+        start_timestamp = start_timestamp[0].strip()
+        status, start_timestamp_cur, err = ssh.execute_cmd(
+            '''
+            echo \'\'\'rs.slaveOk()
+                use local
+                db.replset.minvalid.find({},{_id:0,begin:1})
+                \'\'\' | mongo --port %d admin -u %s -p %s --quiet | grep begin |awk -F '[(,)]' '{print $3}'
+            ''' % (port, settings.db_user, settings.db_password))[0].strip()
+        start_timestamp_cur = start_timestamp_cur[0].strip()
         if not start_timestamp:
             start_timestamp = lock_time
         start_timestamp_dic[port] = start_timestamp
+        tags.append({'Key':'%s_%s'%(host, port),'Value':'{"%s":{"%s":["%s","%s"]}}'%(host, port, start_timestamp, start_timestamp_cur)})
         des_info += str(port) + 'at' + str(start_timestamp) + ' '
     # 打快照
     instance_id = ali_ecs_snap.get_instanceid([ip])
@@ -137,12 +156,15 @@ def make_full_backup(host, info):
     for disk_id in disk_ids:
         snap_name = '{host}-{start_timestamp}'.format(host=host, start_timestamp=datetime.now().strftime('%Y-%m-%d'))
         description = 'mongo full backup' + des_info
-        #snap_response = ali_ecs_snap.create_snapshot(disk_id, snap_name, description)
+        snap_response = ali_ecs_snap.create_snapshot(disk_id, snap_name, tags, description)
+        print(snap_response)
 
     #解锁实例 # 整备与增量备份连接
     inc_bak_cursor = get_cursor()
     for port in port_lst:
-        ssh.execute_cmd("echo 'db.fsyncUnlock();' | mongo --port {port} admin".format(port=port))
+        ssh.execute_cmd("echo 'db.fsyncUnlock();' | mongo --port {port} admin -u {user} -p {password}".format(port=port,
+                                                                                                              user=settings.db_user,
+                                                                                                              password=settings.db_password))
         full_bak_time = start_timestamp_dic[port]
         if abs(int(inc_bak_cursor) - int(full_bak_time)) >= 43200:
             print('-----> to old time')
@@ -166,8 +188,8 @@ def make_full_backup(host, info):
             dir_name = '{local_store}{db_name}-{port}_forfull_{start_time}_{end_time}'.format(local_store=local_store, db_name=host,
                                                                                       port=port, start_time=start_time,
                                                                                       end_time=end_time)
-            cmd = '''mongodump --port {port} -d local -c oplog.rs -q '{{"ts": {{$gt:Timestamp({start_time}, 1),$lt:Timestamp({end_time}, 1)}}}}' -o {file_name} '''.format(
-                host=host, ip=ip, port=port, start_time=start_time, end_time=end_time, file_name=temp_dir_name)
+            cmd = '''mongodump --port {port} -u {user} -p {password} --authenticationDatabase={auth_db} -d local -c oplog.rs -q '{{"ts": {{$gt:Timestamp({start_time}, 1),$lt:Timestamp({end_time}, 1)}}}}' -o {file_name} '''.format(
+                host=host, ip=ip, port=port, user=settings.db_user, password=settings.db_password, auth_db=settings.auth_db, start_time=start_time, end_time=end_time, file_name=temp_dir_name)
             op_dump_exec(ip, cmd, dir_name, temp_dir_name)
 
 def get_wholebak_infos():
@@ -203,9 +225,8 @@ def main():
 
     schedule.every(settings.dumpop_interval).seconds.do(oplog_dump)
     schedule.every(settings.upload_interval).seconds.do(oas_upload)
-    schedule.every().day.at(settings.full_bakdb_at).do(full_db_backup)
+    ##########schedule.every().day.at(settings.full_bakdb_at).do(full_db_backup)
     while True:
-        sys.stdout.write("======check schedule======")
         schedule.run_pending()
         time.sleep(settings.sche_sleep)
 
@@ -222,4 +243,4 @@ if __name__ == '__main__':
     #     schedule.run_pending()
     #     time.sleep(settings.sche_sleep)
 
-    print(get_wholebak_infos())
+    pass

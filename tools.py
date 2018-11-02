@@ -62,7 +62,9 @@ class sshTools(object):
         # 获取命令结果
         channel = stdout.channel
         status = channel.recv_exit_status()
-        return status
+        out = stdout.readlines()
+        err = stderr.readlines()
+        return status, out, err
 
 class ansibleTools(object):
     pass
@@ -102,11 +104,11 @@ class aliEcsSnapshot(object):
             disk_ids.append(disk.get('DiskId'))
         return disk_ids
 
-
-    def create_snapshot(self, disk_id, snap_name, description):
+    def create_snapshot(self, disk_id, snap_name, tags, description):
         request = CreateSnapshotRequest.CreateSnapshotRequest()
         request.set_DiskId(disk_id)
         request.set_SnapshotName(snap_name)
+        request.set_Tags(tags)
         request.set_Description(description)
 
         response = self.client.do_action_with_exception(request)

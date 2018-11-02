@@ -13,6 +13,10 @@ access_key_secret = ''
 region_id = 'cn-hangzhou'
 ssh_user = 'root'
 
+db_user = 'dbbak'
+db_password = ''
+auth_db = 'admin'
+
 oss_endpoint = 'oss-cn-hangzhou-internal.aliyuncs.com'
 oss_bucket = 'test-mongo-backup-low'
 
@@ -30,4 +34,4 @@ upload_interval = 900
 full_bakdb_at = '00:10'
 
 #schedule interval 秒
-sche_sleep = 1
+sche_sleep = 10
