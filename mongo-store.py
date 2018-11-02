@@ -8,17 +8,17 @@ import atexit
 import signal
 from opdump_schedule import main as runopdump
 
-def daemonize(pidfile, *, stdin='/dev/null',
-                          stdout='/dev/null',
-                          stderr='/dev/null'):
 
+def daemonize(pidfile, *, stdin='/dev/null',
+              stdout='/dev/null',
+              stderr='/dev/null'):
     if os.path.exists(pidfile):
         raise RuntimeError('Already running')
 
     # First fork (detaches from parent)
     try:
         if os.fork() > 0:
-            raise SystemExit(0)   # Parent exit
+            raise SystemExit(0)  # Parent exit
     except OSError as e:
         raise RuntimeError('fork #1 failed.')
 
@@ -45,8 +45,8 @@ def daemonize(pidfile, *, stdin='/dev/null',
         os.dup2(f.fileno(), sys.stderr.fileno())
 
     # Write the PID file
-    with open(pidfile,'w') as f:
-        print(os.getpid(),file=f)
+    with open(pidfile, 'w') as f:
+        print(os.getpid(), file=f)
 
     # Arrange to have the PID file removed on exit/signal
     atexit.register(lambda: os.remove(pidfile))
@@ -57,12 +57,14 @@ def daemonize(pidfile, *, stdin='/dev/null',
 
     signal.signal(signal.SIGTERM, sigterm_handler)
 
+
 def main():
     import time
     sys.stdout.write('Daemon started with pid {}\n'.format(os.getpid()))
     while True:
         sys.stdout.write('Daemon Alive! {}\n'.format(time.ctime()))
         time.sleep(10)
+
 
 if __name__ == '__main__':
     PIDFILE = settings.pid_file

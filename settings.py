@@ -1,5 +1,5 @@
 dbs_info = [
-{ 'host': 'test', 'ip': '192.168.1.1', 'port': 27077 },
+    {'host': 'test', 'ip': '192.168.1.1', 'port': 27077},
 
 ]
 
@@ -20,18 +20,17 @@ auth_db = 'admin'
 oss_endpoint = 'oss-cn-hangzhou-internal.aliyuncs.com'
 oss_bucket = 'test-mongo-backup-low'
 
-#记录CURSOR
+# 记录CURSOR
 cur_file = '/tmp/curfile'
 
-
-#dump oplog interval 秒
+# dump oplog interval 秒
 dumpop_interval = 1800
 
-#upload oss interval 秒
+# upload oss interval 秒
 upload_interval = 900
 
-#full backup db at
+# full backup db at
 full_bakdb_at = '00:10'
 
-#schedule interval 秒
+# schedule interval 秒
 sche_sleep = 10
