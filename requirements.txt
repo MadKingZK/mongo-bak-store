@@ -10,7 +10,7 @@ crcmod==1.7
 cryptography==2.3.1
 idna==2.7
 oss2==2.5.0
-paramiko==2.4.2
+paramiko==2.10.1
 pyasn1==0.4.4
 pycparser==2.19
 pycryptodome==3.6.6
